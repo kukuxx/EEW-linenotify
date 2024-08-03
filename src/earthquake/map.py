@@ -20,15 +20,15 @@ P_WAVE_COLOR = "orange"
 S_WAVE_COLOR = "red"
 INTENSITY_COLOR: dict[int, str] = {
     0: None,
-    1: "#387FFF",
-    2: "#244FD0",
-    3: "#35BF56",
-    4: "#F8F755",
-    5: "#FFC759",
-    6: "#FF9935",
-    7: "#DF443B",
-    8: "#7B170F",
-    9: "#7237C1",
+    1: "#5Ed3CF",
+    2: "#2D87FF",
+    3: "#8FC923",
+    4: "#F5F302",
+    5: "#CCAA47",
+    6: "#AC7E4F",
+    7: "#FF9C26",
+    8: "#D95656",
+    9: "#C32EEE",
 }
 legend_img = mpimg.imread("asset/map_legend.png")
 legend_offset = OffsetImage(legend_img, zoom=0.5)
@@ -61,14 +61,33 @@ class Map:
         "The p-wave of the earthquake"
         self.s_wave: plt.Circle = None
         "The s-wave of the earthquake"
+        self.init_figure()
 
     def init_figure(self):
         """
         Initialize the figure of the map.
         """
-        self.fig, self.ax = plt.subplots(figsize=(4, 6))
+        self.fig, self.ax = plt.subplots(figsize=(10, 6))
         self.fig.patch.set_alpha(0)
         self.ax.set_axis_off()
+        # map boundary
+        zoom = 1  # TODO: change zoom according to magnitude
+        mid_lon, mid_lat = TAIWAN_CENTER.lon, TAIWAN_CENTER.lat
+        lon_boundary, lat_boundary = 2.6 * zoom, 2.4 * zoom
+        min_lon, max_lon = mid_lon - lon_boundary, mid_lon + lon_boundary
+        min_lat, max_lat = mid_lat - lat_boundary, mid_lat + lat_boundary
+        self.ax.set_xlim(min_lon, max_lon)
+        self.ax.set_ylim(min_lat, max_lat)
+        # add legend
+        self.ax.add_artist(
+            AnnotationBbox(
+                OffsetImage(legend_img, zoom=0.45, resample=True),
+                (1, 0),
+                xycoords="axes fraction",
+                boxcoords="axes fraction",
+                box_alignment=(0.8, 0.2),
+                frameon=False,
+            ))
 
     @property
     def image(self) -> io.BytesIO:
@@ -85,16 +104,14 @@ class Map:
             raise RuntimeError("Intensity have not been calculated yet.")
         if self.fig is None:
             self.init_figure()
-        # map boundary
-        zoom = 1  # TODO: change zoom according to magnitude
-        mid_lon, mid_lat = (TAIWAN_CENTER.lon + self._eq.lon) / 2, (TAIWAN_CENTER.lat + self._eq.lat) / 2
-        lon_boundary, lat_boundary = 1.6 * zoom, 2.4 * zoom
-        min_lon, max_lon = mid_lon - lon_boundary, mid_lon + lon_boundary
-        min_lat, max_lat = mid_lat - lat_boundary, mid_lat + lat_boundary
-        self.ax.set_xlim(min_lon, max_lon)
-        self.ax.set_ylim(min_lat, max_lat)
-        TOWN_DATA.plot(ax=self.ax, facecolor="lightgrey", edgecolor="black", linewidth=0.22 / zoom)
-        
+
+        zoom = 1
+
+        # TOWN_DATA.plot(ax=self.ax,
+        #                facecolor="lightgrey",
+        #                edgecolor="black",
+        #                linewidth=0.22 / zoom)
+
         intensity_patches = {}
         for code, region in self._eq._expected_intensity.items():
             intensity = region.intensity.value
@@ -105,9 +122,15 @@ class Map:
 
         for intensity, patches in intensity_patches.items():
             for patch in patches:
-                patch.plot(ax=self.ax, color=INTENSITY_COLOR[intensity])
+                patch.plot(ax=self.ax,
+                           edgecolor="darkgrey",
+                           facecolor=INTENSITY_COLOR[intensity],
+                           linewidth=0.25 / zoom)
 
-        COUNTRY_DATA.plot(ax=self.ax, edgecolor="black", facecolor="none", linewidth=0.64 / zoom)
+        COUNTRY_DATA.plot(ax=self.ax,
+                          edgecolor="black",
+                          facecolor="none",
+                          linewidth=0.5 / zoom)
         # draw epicenter
         self.ax.scatter(
             self._eq.lon,
@@ -117,23 +140,7 @@ class Map:
             s=160 / zoom,
             linewidths=2.5 / zoom,
         )
-        # add legend
-        if self._eq.lon > TAIWAN_CENTER.lon:
-            x = 1
-            align = 0.8
-        else:
-            x = 0
-            align = 0.2
-        self.ax.add_artist(
-            AnnotationBbox(
-                OffsetImage(legend_img, zoom=0.5),
-                (x, 0),
-                xycoords="axes fraction",
-                boxcoords="axes fraction",
-                box_alignment=(align, 0.2),
-                frameon=False,
-            )
-        )
+
         self._drawn = True
 
     def draw_wave(self, time: float, waves: str = "all"):
@@ -146,7 +153,8 @@ class Map:
         :type waves: str
         """
         if not self._drawn:
-            warnings.warn("Map have not been drawn yet, background will be empty.")
+            warnings.warn(
+                "Map have not been drawn yet, background will be empty.")
 
         waves = waves.lower()
         if waves == "all":
@@ -185,7 +193,7 @@ class Map:
             warnings.warn("Map have not been drawn yet, it will be empty.")
 
         _map = io.BytesIO()
-        self.fig.savefig(_map, format="png", bbox_inches="tight")
+        self.fig.savefig(_map, format="png", dpi=300, bbox_inches='tight')
         _map.seek(0)
         self._image = _map
         return self._image

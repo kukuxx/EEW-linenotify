@@ -4,9 +4,5 @@
 enable = true
 custom_regions = []
 
-[discord-bot]
-token = 
-channels = []
-
 [line-notify]
 token = 

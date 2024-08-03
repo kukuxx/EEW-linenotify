@@ -1,4 +1,3 @@
-import re
 import asyncio
 from datetime import datetime
 from typing import Optional
@@ -31,7 +30,7 @@ class LineNotifyClient(BaseNotificationClient):
         self.config = config
         self._notify_token = notify_token
         self._custom_set = Settings.get("customization")
-        self.response_status: int = None
+        self._eew_task: asyncio.Future = None
         self._region_intensity: Optional[dict[tuple[str, str],
                                               tuple[str, int]]] = {}
 
@@ -87,15 +86,22 @@ class LineNotifyClient(BaseNotificationClient):
 
         return self._region_intensity
 
-    def check_intensity(self):
+    async def check_intensity(self, eew: EEW):
+        customize = self._custom_set.get("enable")
         threshold = self._custom_set.get("threshold")
+        if not customize:
+            return True
+        elif eew.serial > 1:
+            result = await self._eew_task
+            if result:
+                return True
+        if not isinstance(threshold, str):
+            raise ValueError("Threshold is not a string.")
         for key, value in self._region_intensity.items():
             intensity_value, _ = value
-            match = re.search(r'\d+', intensity_value)
-            if int(match.group()) >= threshold:
+            if intensity_value >= threshold:
                 return True
-            else:
-                return False
+        return False
 
     async def _send_region_intensity(self, eew: EEW):
         #發送各地震度和抵達時間並排版
@@ -103,7 +109,8 @@ class LineNotifyClient(BaseNotificationClient):
         await eq._intensity_calculated.wait()
         if eq._intensity_calculated.is_set():
             self.get_region_intensity(eew)
-        if self._region_intensity is not None and self.check_intensity():
+        if self._region_intensity is not None and await self.check_intensity(
+                eew):
             current_time = int(datetime.now().timestamp())
             if eew.serial <= 1:
                 region_intensity_message = "\n🚨趴下,掩護,穩住🚨\n⚠️震度僅供參考⚠️\n預估震度|抵達時間:"
@@ -125,6 +132,9 @@ class LineNotifyClient(BaseNotificationClient):
             async with aiohttp.ClientSession(headers=_headers) as session:
                 await self._post_line_api(
                     session, intensity_msg=region_intensity_message)
+            if eew.final:
+                asyncio.create_task(self._send_eew_img(eew))
+            return True
 
     async def _send_eew_img(self, eew: EEW):
         #發送各地震度圖片
@@ -165,7 +175,6 @@ class LineNotifyClient(BaseNotificationClient):
             async with session.post(url=LINE_NOTIFY_API,
                                     data=form) as response:
                 if response.ok:
-                    self.response_status = response.status
                     self.logger.info(
                         f"Message sent to Line-Notify successfully")
 
@@ -199,18 +208,10 @@ class LineNotifyClient(BaseNotificationClient):
         :param eew: The EEW.
         :type eew: EEW
         """
-
-        # headers = {
-        #     "Content-Type": "application/x-www-form-urlencoded",
-        #     "Authorization": f"Bearer {self._notify_token}"
-        # }
-        # message = self.get_eew_message(eew)
-        # async with aiohttp.ClientSession(headers=headers) as session:
-        #     await self._send_message(session, msg=message)
-
-        await self._send_region_intensity(eew)
-        if eew.final:
-            asyncio.create_task(self._send_eew_img(eew))
+        if self._eew_task is None or self._eew_task.done():
+            self._eew_task = asyncio.create_task(
+                self._send_region_intensity(eew))
+            await self._eew_task
 
     async def update_eew(self, eew: EEW):
         """
@@ -221,14 +222,4 @@ class LineNotifyClient(BaseNotificationClient):
         :param eew: The updated EEW.
         :type eew: EEW
         """
-        # headers = {
-        #     "Content-Type": "application/x-www-form-urlencoded",
-        #     "Authorization": f"Bearer {self._notify_token}"
-        # }
-        # message = self.get_eew_message(eew)
-        # async with aiohttp.ClientSession(headers=headers) as session:
-        #     await self._send_message(session, msg=message)
-
         await self._send_region_intensity(eew)
-        if eew.final:
-            asyncio.create_task(self._send_eew_img(eew))
