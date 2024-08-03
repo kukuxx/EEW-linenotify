@@ -1,14 +1,11 @@
 import logging
 import os
 
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
-
 
 def main():
     from src import Client, Config, InterceptHandler, Logging, WebSocketConnectionConfig, WebSocketService
 
+    
     config = Config()
     logger = Logging(
         retention=config["log"]["retention"],

@@ -3,25 +3,25 @@ from typing import Any, Union
 import tomlkit
 
 
-class Config:
+class Settings:
     """
-    The a configuration class.
+    The a settings class.
     """
 
-    _path: str = "config.toml"
+    _path: str = "settings.toml"
     with open(_path, "r") as f:
-        _config: dict = tomlkit.parse(f.read())
+        _settings: dict = tomlkit.parse(f.read())
 
     @classmethod
-    def _load_config(cls) -> dict:
+    def _load_settings(cls) -> dict:
         """
-        Load the configuration file.
+        Load the settings file.
         This is an internal method and should not be called directly.
 
-        :raises TOMLDecodeError: Raised when the config is invalid.
+        :raises TOMLDecodeError: Raised when the settings is invalid.
         :raises FileNotFoundError: Raised when the file is not found.
 
-        :return: The configuration file.
+        :return: The settings file.
         :rtype: dict
         """
         with open(cls._path, "r") as f:
@@ -30,7 +30,7 @@ class Config:
     @classmethod
     def get(cls, key: str, default: Any = None) -> Union[str, Any]:
         """
-        Get a key from the configuration file.
+        Get a key from the settings file.
 
         :param key: The key to get.
         :type key: str
@@ -40,18 +40,18 @@ class Config:
         :return: The value of the key.
         :rtype: str, Any
         """
-        return cls._config.get(key, default)
+        return cls._settings.get(key, default)
 
     @classmethod
     def reload(cls) -> None:
         """
-        Reload the configuration file.
+        Reload the settings file.
         """
-        cls._config = cls._load_config()
+        cls._settings = cls._load_settings()
 
     def __getitem__(self, key: str) -> Any:
         """
-        Get a key from the configuration file.
+        Get a key from the settings file.
 
         :param key: The key to get.
         :type key: str
@@ -59,4 +59,4 @@ class Config:
         :return: The value of the key.
         :rtype: Any
         """
-        return self._config[key]
+        return self._settings[key]

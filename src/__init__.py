@@ -16,6 +16,7 @@ from .client.websocket import (
     WebSocketService,
 )
 from .config import Config
+from .settings import Settings
 from .earthquake.eew import EEW, EarthquakeData, Provider
 from .earthquake.location import (
     COUNTRY_DATA,

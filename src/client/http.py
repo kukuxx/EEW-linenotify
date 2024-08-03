@@ -27,6 +27,7 @@ class HTTPClient:
     ):
         self._logger = logger
         self._debug_mode = debug
+        self._timer = None
 
         self.DOMAIN = domain
         self.__API_VERSION = api_version
@@ -111,7 +112,18 @@ class HTTPClient:
         try:
             async with self._session.request(method, url, **kwargs) as r:
                 resp = await r.json() if json else await r.text()
-                self._logger.debug(f"{method} {url} receive {r.status}: {resp}")
+                if not resp:
+                    if self._timer is None:
+                        self._timer = time.time()
+                        self._logger.debug(f"{method} {url} receive {r.status}: {resp}")
+                    else:
+                        current_time = time.time()
+                        if current_time - self._timer >= 10:
+                            self._timer = current_time
+                            self._logger.debug(f"{method} {url} receive {r.status}: {resp}")
+                else:
+                    self._timer = time.time()
+                    self._logger.debug(f"{method} {url} receive {r.status}: {resp}")
                 return resp
         except Exception:
             if retry > 0:
