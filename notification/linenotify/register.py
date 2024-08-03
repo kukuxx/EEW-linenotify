@@ -1,6 +1,5 @@
-import os
+from src import Config, Settings, Logger
 
-from src import Config, Logger
 
 NAMESPACE = "line-notify"
 
@@ -17,11 +16,11 @@ def register(config: Config, logger: Logger) -> None:
     :param logger: The logger instance.
     :type logger: Logger
     """
-    notify_token = os.getenv("LINENOTIFY_TOKEN")
+    line_settings = Settings.get("line-notify")
+    notify_token = line_settings.get("token")
     if notify_token is None:
         logger.error(f"{NAMESPACE} line-notify token is not set")
         return
 
     from .linenotify import LineNotifyClient
-
     return LineNotifyClient(logger, config, notify_token)

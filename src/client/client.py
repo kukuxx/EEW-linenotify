@@ -148,8 +148,8 @@ class Client:
     async def connect(self):
         """Connect to ExpTech API and start receiving data"""
         if self.websocket_config:
-            await self._http.test_ws_latencies()
-            self._http.switch_ws_node("fastest")
+            # await self._http.test_ws_latencies()
+            # self._http.switch_ws_node("fastest")
             await self.ws_connect()
         else:
             await self._get_eew_loop()

@@ -1,37 +1,30 @@
 import io
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
+import requests
+import folium
+from folium import GeoJson
 
 if TYPE_CHECKING:
     from earthquake.eew import EarthquakeData
 
-import warnings
+from ..settings import Settings
+from .location import COUNTRY_DATA, TAIWAN_CENTER, TOWN_RANGE
 
-import matplotlib.image as mpimg
-from matplotlib.offsetbox import AnnotationBbox, OffsetImage
-
-from .location import COUNTRY_DATA, TAIWAN_CENTER, TOWN_DATA, TOWN_RANGE
-
-plt.ioff()
-plt.switch_backend("AGG")
-
-P_WAVE_COLOR = "orange"
-S_WAVE_COLOR = "red"
+url = Settings.get("uploadurl")
+key = Settings.get("uploadkey")
 INTENSITY_COLOR: dict[int, str] = {
     0: None,
-    1: "#387FFF",
-    2: "#244FD0",
-    3: "#35BF56",
-    4: "#F8F755",
-    5: "#FFC759",
-    6: "#FF9935",
-    7: "#DF443B",
-    8: "#7B170F",
-    9: "#7237C1",
+    1: "#5Ed3CF",
+    2: "#2D87FF",
+    3: "#8FC923",
+    4: "#F5F302",
+    5: "#CCAA47",
+    6: "#AC7E4F",
+    7: "#FF9C26",
+    8: "#D95656",
+    9: "#C32EEE",
 }
-legend_img = mpimg.imread("asset/map_legend.png")
-legend_offset = OffsetImage(legend_img, zoom=0.5)
 
 
 class Map:
@@ -39,153 +32,147 @@ class Map:
     Represents the map for earthquake.
     """
 
-    __slots__ = ("_eq", "_image", "fig", "ax", "_drawn", "p_wave", "s_wave")
+    __slots__ = ("_eq", "_image", "_drawn")
 
     def __init__(self, earthquake: "EarthquakeData"):
         """
         Initialize the map.
 
-        :param lon: longitude of the epicenter
-        :param lat: latitude of the epicenter
+        :param earthquake: The earthquake data
         """
         self._eq = earthquake
         self._image = None
         self._drawn: bool = False
         "Whether the map has been drawn"
 
-        self.fig: plt.Figure = None
-        "The figure object of the map"
-        self.ax: plt.Axes = None
-        "The axes of the figure"
-        self.p_wave: plt.Circle = None
-        "The p-wave of the earthquake"
-        self.s_wave: plt.Circle = None
-        "The s-wave of the earthquake"
-
-    def init_figure(self):
-        """
-        Initialize the figure of the map.
-        """
-        self.fig, self.ax = plt.subplots(figsize=(4, 6))
-        self.fig.patch.set_alpha(0)
-        self.ax.set_axis_off()
-
     @property
-    def image(self) -> io.BytesIO:
+    def image(self) -> io.StringIO:
         """
         The map image of the earthquake.
         """
         return self._image
 
     def draw(self):
-        """
-        Draw the map of the earthquake if intensity have been calculated.
-        """
         if self._eq._expected_intensity is None:
             raise RuntimeError("Intensity have not been calculated yet.")
-        if self.fig is None:
-            self.init_figure()
-        # map boundary
-        zoom = 1  # TODO: change zoom according to magnitude
-        mid_lon, mid_lat = (TAIWAN_CENTER.lon + self._eq.lon) / 2, (TAIWAN_CENTER.lat + self._eq.lat) / 2
-        lon_boundary, lat_boundary = 1.6 * zoom, 2.4 * zoom
-        min_lon, max_lon = mid_lon - lon_boundary, mid_lon + lon_boundary
-        min_lat, max_lat = mid_lat - lat_boundary, mid_lat + lat_boundary
-        self.ax.set_xlim(min_lon, max_lon)
-        self.ax.set_ylim(min_lat, max_lat)
-        TOWN_DATA.plot(ax=self.ax, facecolor="lightgrey", edgecolor="black", linewidth=0.22 / zoom)
+
+        try:
+            CRS = "EPSG:4326"
+            # 地圖初始化 設定中心為台灣中心
+            m = folium.Map(
+                location=[TAIWAN_CENTER.lat, TAIWAN_CENTER.lon],
+                zoom_start=7,
+                tiles=None,
+                # attr="⚠️圖片僅供參考,實際請以氣象署公布為準⚠️",
+                max_bounds=True,  # 限制地圖在初始範圍內
+                zoomControl=False,  # 禁用缩放控件
+                # min_zoom=7,                 # 設定最小縮放級別
+                # max_zoom=9                  # 設定最大縮放級別
+            )
+
+            # 設定地圖的顯示範圍
+            bounds = [[20.5, 118.5], [25.75, 123.5]]
+            m.fit_bounds(bounds)
+
+            # 停用地圖上的所有縮放和拖曳功能
+            m.options["scrollWheelZoom"] = False
+            m.options["doubleClickZoom"] = False
+            m.options["touchZoom"] = False
+            m.options["dragging"] = False
+
+            autozoom_html = """
+            <style>
+                .marker-icon {
+                    font-size: 48px;
+                    color: red;
         
-        intensity_patches = {}
-        for code, region in self._eq._expected_intensity.items():
-            intensity = region.intensity.value
-            if intensity > 0:
-                if intensity not in intensity_patches:
-                    intensity_patches[intensity] = []
-                intensity_patches[intensity].append(TOWN_RANGE[code])
+                    @media screen and (width > 992px) {
+                        font-size: 24px;
+                        color: red;
+                    }
+                }
+        
+                .float_image {
+                    position: absolute;
+                    z-index: 999999;
+                    bottom: 25%;
+                    left: 10%;
+                    width: 10%;
+        
+                    @media screen and (width > 992px) {
+                        position: absolute;
+                        z-index: 999999;
+                        bottom: 10%;
+                        left: 25%;
+                        width: 5%;
+                    }
+                }
+            </style>
+             <img class="float_image" alt="float_image"
+                src="https://raw.githubusercontent.com/kukuxx/EEW-linenotify/main/asset/map_legend.png">
+            </img>
+            """
 
-        for intensity, patches in intensity_patches.items():
-            for patch in patches:
-                patch.plot(ax=self.ax, color=INTENSITY_COLOR[intensity])
+            m.get_root().html.add_child(folium.Element(autozoom_html))
 
-        COUNTRY_DATA.plot(ax=self.ax, edgecolor="black", facecolor="none", linewidth=0.64 / zoom)
-        # draw epicenter
-        self.ax.scatter(
-            self._eq.lon,
-            self._eq.lat,
-            marker="x",
-            color="red",
-            s=160 / zoom,
-            linewidths=2.5 / zoom,
-        )
-        # add legend
-        if self._eq.lon > TAIWAN_CENTER.lon:
-            x = 1
-            align = 0.8
-        else:
-            x = 0
-            align = 0.2
-        self.ax.add_artist(
-            AnnotationBbox(
-                OffsetImage(legend_img, zoom=0.5),
-                (x, 0),
-                xycoords="axes fraction",
-                boxcoords="axes fraction",
-                box_alignment=(align, 0.2),
-                frameon=False,
-            )
-        )
-        self._drawn = True
+            for code, region_gdf in TOWN_RANGE.items():
+                TOWN_RANGE[code] = region_gdf.set_crs(CRS)
 
-    def draw_wave(self, time: float, waves: str = "all"):
-        """
-        Draw the P and S wave if possible.
+            # 繪製區域及其強度
+            for code, region_gdf in TOWN_RANGE.items():
+                if code in self._eq._expected_intensity:
+                    intensity = self._eq._expected_intensity[
+                        code].intensity.value
+                    if intensity > 0:
+                        # 繪製區域，並根據強度設定顏色
+                        folium.GeoJson(
+                            region_gdf,
+                            style_function=lambda feature, intensity=intensity:
+                            {
+                                "fillColor": INTENSITY_COLOR[intensity],
+                                "color": "black",
+                                "weight": 0.25,
+                                "fillOpacity": 1
+                            }).add_to(m)
 
-        :param time: the travel time in seconds of the wave to draw
-        :type time: float
-        :param waves: type of the wave to draw, can be `P`, `S` or `all` (case-insensitive), defaults to `all`
-        :type waves: str
-        """
-        if not self._drawn:
-            warnings.warn("Map have not been drawn yet, background will be empty.")
+            # 繪製國家邊界
+            folium.GeoJson(COUNTRY_DATA.set_crs(CRS),
+                           style_function=lambda x: {
+                               "color": "black",
+                               "weight": 0.65,
+                               "fillOpacity": 0
+                           }).add_to(m)
 
-        waves = waves.lower()
-        if waves == "all":
-            waves = "ps"
+            # 在震央位置新增標記 使用 HTML 和 CSS 建立帶有「X」符號的標記
+            folium.Marker(
+                location=[self._eq.lat, self._eq.lon],
+                popup="震央",
+                icon=folium.DivIcon(
+                    html='<div class="marker-icon";>&#10006;&#xfe0e;</div>')
+            ).add_to(m)
 
-        p_dis, s_dis = self._eq._model.get_arrival_distance(time)
+            _map = io.StringIO()
+            html = m.get_root().render()
+            _map.write(html)
+            _map.seek(0)
+            self._image = _map
 
-        if "p" in waves:
-            if self.p_wave is not None:
-                self.p_wave.remove()
-            self.p_wave = plt.Circle(
-                (self._eq.lon, self._eq.lat),
-                p_dis,
-                color=P_WAVE_COLOR,
-                fill=False,
-                linewidth=1.5,
-            )
-            self.ax.add_patch(self.p_wave)
+            self._drawn = True
 
-        if "s" in waves:
-            if self.s_wave is not None:
-                self.s_wave.remove()
-            self.s_wave = plt.Circle(
-                (self._eq.lon, self._eq.lat),
-                s_dis,
-                color=S_WAVE_COLOR,
-                fill=False,
-                linewidth=1.5,
-            )
-            self.ax.add_patch(self.s_wave)
+        except Exception as e:
+            print(f"Error: {e}")
 
-    def save(self):
-        if self.fig is None:
-            raise RuntimeError("Map have not been initialized yet.")
-        if not self._drawn:
-            warnings.warn("Map have not been drawn yet, it will be empty.")
+    def upload(self, id):
+        filename = id
+        fileobj = self._image.getvalue()
 
-        _map = io.BytesIO()
-        self.fig.savefig(_map, format="png", bbox_inches="tight")
-        _map.seek(0)
-        self._image = _map
-        return self._image
+        data = {
+            "scriptKey": f"{key}",
+            "fileName": f"{filename}.html",
+            "fileContent": fileobj,
+        }
+
+        response = requests.post(url, data=data)
+
+        if not response.ok:
+            print(f"Error: {response.text}")

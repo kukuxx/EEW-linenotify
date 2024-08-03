@@ -32,14 +32,18 @@ class HTTPClient:
         self.DOMAIN = domain
         self.__API_VERSION = api_version
         self.API_NODES = [
-            f"https://api-{i}.{self.DOMAIN}/api/v{api_version}" for i in range(1, 3)
+            f"https://api-{i}.{self.DOMAIN}/api/v{api_version}"
+            for i in range(1, 3)
         ]  # api-1 ~ api-2
         self.__base_url = self.API_NODES[0]
         self.node_latencies = [(node, float("inf")) for node in self.API_NODES]
         self.__current_node_index = 0
-        self.WS_NODES = [f"wss://lb-{i}.{self.DOMAIN}/websocket" for i in range(1, 5)]  # lb-1 ~ lb-4
+        self.WS_NODES = [
+            f"wss://lb-{i}.{self.DOMAIN}/websocket" for i in range(1, 5)
+        ]  # lb-1 ~ lb-4
         self._current_ws_node = self.WS_NODES[0]
-        self.ws_node_latencies = [(node, float("inf")) for node in self.WS_NODES]
+        self.ws_node_latencies = [(node, float("inf"))
+                                  for node in self.WS_NODES]
         self._current_ws_node_index = 0
 
         self._loop = loop or asyncio.get_event_loop()
@@ -61,7 +65,8 @@ class HTTPClient:
 
     async def test_api_latencies(self):
         """Test all API nodes latencies"""
-        latencies = [(node, await self._test_latency(f"{node}/eq/eew")) for node in self.API_NODES]
+        latencies = [(node, await self._test_latency(f"{node}/eq/eew"))
+                     for node in self.API_NODES]
         latencies.sort(key=lambda x: x[1])
         self.node_latencies = latencies
         return latencies
@@ -91,7 +96,13 @@ class HTTPClient:
         self.__base_url = url
         self._logger.info(f"Switched to API node: {url}")
 
-    async def request(self, method: str, path: str, *, json: bool = True, retry: int = 0, **kwargs):
+    async def request(self,
+                      method: str,
+                      path: str,
+                      *,
+                      json: bool = True,
+                      retry: int = 0,
+                      **kwargs):
         """
         Make a request to the API.
 
@@ -115,21 +126,28 @@ class HTTPClient:
                 if not resp:
                     if self._timer is None:
                         self._timer = time.time()
-                        self._logger.debug(f"{method} {url} receive {r.status}: {resp}")
+                        self._logger.debug(
+                            f"{method} {url} receive {r.status}: {resp}")
                     else:
                         current_time = time.time()
-                        if current_time - self._timer >= 10:
+                        if current_time - self._timer >= 60:
                             self._timer = current_time
-                            self._logger.debug(f"{method} {url} receive {r.status}: {resp}")
+                            self._logger.debug(
+                                f"{method} {url} receive {r.status}: {resp}")
                 else:
                     self._timer = time.time()
-                    self._logger.debug(f"{method} {url} receive {r.status}: {resp}")
+                    self._logger.debug(
+                        f"{method} {url} receive {r.status}: {resp}")
                 return resp
         except Exception:
             if retry > 0:
                 self.switch_api_node()
                 await asyncio.sleep(1)
-                return await self.request(method, path, json=json, retry=retry - 1, **kwargs)
+                return await self.request(method,
+                                          path,
+                                          json=json,
+                                          retry=retry - 1,
+                                          **kwargs)
             raise
 
     async def get(self, path: str, retry: int = 0, **kwargs):
@@ -162,7 +180,11 @@ class HTTPClient:
         :return: The response from the API.
         :rtype: str | dict | Any
         """
-        return await self.request("POST", path, data=data, retry=retry, **kwargs)
+        return await self.request("POST",
+                                  path,
+                                  data=data,
+                                  retry=retry,
+                                  **kwargs)
 
     # websocket node
     async def _test_ws_latency(self, url: str) -> float:
@@ -180,7 +202,8 @@ class HTTPClient:
 
     async def test_ws_latencies(self):
         """Test all websocket nodes latencies"""
-        latencies = [(node, await self._test_ws_latency(node)) for node in self.WS_NODES]
+        latencies = [(node, await self._test_ws_latency(node))
+                     for node in self.WS_NODES]
         latencies.sort(key=lambda x: x[1])
         self.ws_node_latencies = latencies
         return latencies
@@ -194,7 +217,8 @@ class HTTPClient:
         """
 
         if type_or_url == "next":
-            idx = (self._current_ws_node_index + 1) % len(self.ws_node_latencies)
+            idx = (self._current_ws_node_index + 1) % len(
+                self.ws_node_latencies)
         elif type_or_url == "fastest":
             idx = 0
         elif type_or_url == "random":
