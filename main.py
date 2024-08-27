@@ -5,7 +5,6 @@ import os
 def main():
     from src import Client, Config, InterceptHandler, Logging, WebSocketConnectionConfig, WebSocketService
 
-    
     config = Config()
     logger = Logging(
         retention=config["log"]["retention"],
@@ -29,7 +28,9 @@ def main():
         logger.info("API_KEY not found, using HTTP Client")
         ws_config = None
 
-    client = Client(config=config, logger=logger, websocket_config=ws_config, debug=config["debug-mode"])
+    client = Client(
+        config=config, logger=logger, websocket_config=ws_config, debug=config["debug-mode"]
+    )
     client.load_notification_clients("notification")
     client.run()
 

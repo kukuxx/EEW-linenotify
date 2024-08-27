@@ -44,6 +44,7 @@ class EarthquakeData:
         "_s_arrival_distance_interp_func",
         "_map",
         "_intensity_calculated",
+        "_check_intensity",
     )
 
     def __init__(
@@ -77,6 +78,7 @@ class EarthquakeData:
         self._model = get_wave_model(depth)
         self._intensity_calculated = asyncio.Event()
         self._draw_task: asyncio.Future = None
+        self._check_intensity: bool = True
         self._city_max_intensity: dict[str, RegionExpectedIntensity] = None
         self._expected_intensity: dict[int, RegionExpectedIntensity] = None
         self._map: Map = Map(self)
@@ -169,54 +171,63 @@ class EarthquakeData:
         :rtype: EarthquakeData
         """
         return cls(
-            location=EarthquakeLocation(data["lon"], data["lat"],
-                                        data.get("loc", MISSING)),
+            location=EarthquakeLocation(data["lon"], data["lat"], data.get("loc", MISSING)),
             magnitude=data["mag"],
             depth=data["depth"],
             time=datetime.fromtimestamp(data["time"] / 1000),
-            max_intensity=Intensity(i) if
-            (i := data.get("max")) is not None else MISSING,
+            max_intensity=Intensity(i) if (i := data.get("max")) is not None else MISSING,
         )
 
-    async def calc_expected_intensity(
-        self,
-        regions: list[RegionLocation] = MISSING
-    ) -> dict[int, RegionExpectedIntensity]:
+    async def calc_expected_intensity(self,
+                                      regions: list[RegionLocation] = MISSING
+                                      ) -> dict[int, RegionExpectedIntensity]:
         """
         Calculate the expected intensity of the earthquake.
         """
         self._intensity_calculated.clear()
         customize = self._custom_set.get("enable")
         desired_regions = self._custom_set.get("custom_regions")
-        intensities = calculate_expected_intensity_and_travel_time(
-            self, regions)
+        intensities = calculate_expected_intensity_and_travel_time(self, regions)
         self._expected_intensity = dict(intensities)
         if not customize:
             self._city_max_intensity = {
-                city: max(city_intensities,
-                          key=lambda x: x.intensity._float_value)
-                for city, regions in REGIONS_GROUP_BY_CITY.items()
-                if (city_intensities := [
-                    intensity for region in regions
-                    if (intensity := self._expected_intensity.get(region.code))
-                ])
+                city: max(city_intensities, key=lambda x: x.intensity._float_value)
+                for city, regions in REGIONS_GROUP_BY_CITY.items() if (
+                    city_intensities := [
+                        intensity for region in regions
+                        if (intensity := self._expected_intensity.get(region.code))
+                    ]
+                )
             }
         else:
             self._city_max_intensity = {
                 city: [
-                    intensity for region in regions
-                    if region.code in desired_regions and (
-                        intensity := self._expected_intensity.get(region.code))
+                    intensity for region in regions if region.code in desired_regions and
+                    (intensity := self._expected_intensity.get(region.code))
                 ]
                 for city, regions in REGIONS_GROUP_BY_CITY.items()
             }
             self._city_max_intensity = {
                 city: intensities
-                for city, intensities in self._city_max_intensity.items()
-                if intensities
+                for city, intensities in self._city_max_intensity.items() if intensities
             }
+
+            if not self.check_intensity():
+                self._check_intensity = False
+
         self._intensity_calculated.set()
         return self._expected_intensity
+
+    def check_intensity(self):
+        threshold = self._custom_set.get("threshold")
+        try:
+            threshold = float(threshold)
+        except ValueError:
+            raise ValueError("Threshold is not a int.")
+        for city, intensities in self._city_max_intensity.items():
+            if any(intensity.intensity.value >= threshold for intensity in intensities):
+                return True
+        return False
 
     def draw_image(self):
         try:
@@ -225,7 +236,7 @@ class EarthquakeData:
             self._map._drawn = False
             pass
         except Exception as e:
-            self._calc_task.cancel()
+            self._draw_task.cancel()
             print(f"Error:{e}")
         finally:
             pass
@@ -234,9 +245,6 @@ class EarthquakeData:
         if self._draw_task is None:
             self._draw_task = loop.run_in_executor(None, self.draw_image)
         return self._draw_task
-
-    # async def wait_until_intensity_calculated(self):
-    #     await self._calc_task
 
 
 class Provider:
@@ -275,8 +283,7 @@ class EEW:
     Represents an earthquake early warning event.
     """
 
-    __slots__ = ("_id", "_serial", "_final", "_earthquake", "_provider",
-                 "_time")
+    __slots__ = ("_id", "_serial", "_final", "_earthquake", "_provider", "_time")
 
     def __init__(
         self,

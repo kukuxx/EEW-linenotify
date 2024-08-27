@@ -56,18 +56,17 @@ class Client:
         self.logger = logger
         self.debug_mode = debug
         self._loop = loop or asyncio.get_event_loop()
-        self._http = HTTPClient(logger,
-                                debug,
-                                session=session,
-                                loop=self._loop)
+        self._http = HTTPClient(logger, debug, session=session, loop=self._loop)
         self._ws = None
         self.websocket_config = websocket_config
 
         self.alerts = TTLCache(maxsize=float("inf"), ttl=60 * 60)  # 1hr
+        self.sent_alerts = TTLCache(maxsize=20, ttl=120)
         eew_source: dict = config.get("eew_source")
-        self.__eew_source = (None if eew_source.get("all") else [
-            source for source, enable in eew_source.items() if enable
-        ])
+        self.__eew_source = (
+            None if eew_source.get("all") else
+            [source for source, enable in eew_source.items() if enable]
+        )
         self.notification_client = []
         self.event_handlers = defaultdict(list)
         self.__ready = asyncio.Event()
@@ -85,20 +84,22 @@ class Client:
             f"Magnitude: {eew.earthquake.mag}\n"
             f"    Depth: {eew.earthquake.depth}km\n"
             f"     Time: {eew.earthquake.time.strftime('%Y/%m/%d %H:%M:%S')}\n"
-            "--------------------------------")
+            "--------------------------------"
+        )
 
         await eew.earthquake.calc_expected_intensity()
-        if eew.final:
-            eew.earthquake.draw_image_in_executor(self._loop)
+        eew.earthquake.draw_image_in_executor(self._loop)
 
         # call custom notification client
-        for client in self.notification_client:
-            self._loop.create_task(client.send_eew(eew))
+        if eew.earthquake._check_intensity:
+            self.sent_alerts[eew.id] = True
+            for client in self.notification_client:
+                self._loop.create_task(client.send_eew(eew))
 
     async def update_alert(self, data: dict):
         """Update an existing EEW alert"""
         eew = EEW.from_dict(data)
-        # old_eew = self.alerts.get(eew.id)
+        old_eew = self.alerts.get(eew.id)
         self.alerts[eew.id] = eew
 
         self.logger.info(
@@ -109,17 +110,24 @@ class Client:
             f"Magnitude: {eew.earthquake.mag}\n"
             f"    Depth: {eew.earthquake.depth}km\n"
             f"     Time: {eew.earthquake.time.strftime('%Y/%m/%d %H:%M:%S')}\n"
-            "--------------------------------")
+            "--------------------------------"
+        )
 
-        # if old_eew is not None:
-        #     old_eew.earthquake._calc_task.cancel()
+        if old_eew is not None:
+            old_eew.earthquake._draw_task.cancel()
         await eew.earthquake.calc_expected_intensity()
-        if eew.final:
-            eew.earthquake.draw_image_in_executor(self._loop)
+        eew.earthquake.draw_image_in_executor(self._loop)
 
         # call custom notification client
-        for client in self.notification_client:
-            self._loop.create_task(client.update_eew(eew))
+        if eew.earthquake._check_intensity:
+            if self.sent_alerts.get(eew.id) is None:
+                self.sent_alerts[eew.id] = True
+            for client in self.notification_client:
+                self._loop.create_task(client.update_eew(eew))
+        else:
+            if self.sent_alerts.get(eew.id):
+                for client in self.notification_client:
+                    self._loop.create_task(client.update_eew(eew))
 
     async def _emit(self, event: str, *args):
         for handler in self.event_handlers[event]:
@@ -132,8 +140,7 @@ class Client:
 
     async def on_eew(self, data: dict):
         """Handle EEW event"""
-        if self.__eew_source is not None and data[
-                "author"] not in self.__eew_source:
+        if self.__eew_source is not None and data["author"] not in self.__eew_source:
             # source is None: all source
             # source is list: only specified source
             return
@@ -169,14 +176,16 @@ class Client:
                         "ExpTech WebSocket is ready\n"
                         "--------------------------------------------------\n"
                         f"Subscribed services: {', '.join(self._ws.subscribed_services)}\n"
-                        "--------------------------------------------------")
+                        "--------------------------------------------------"
+                    )
                     self.__ready.set()
                 elif in_reconnect:
                     self.logger.info(
                         "ExpTech WebSocket successfully reconnect\n"
                         "--------------------------------------------------\n"
                         f"Subscribed services: {', '.join(self._ws.subscribed_services)}\n"
-                        "--------------------------------------------------")
+                        "--------------------------------------------------"
+                    )
                 if task:
                     task.cancel()
                 in_reconnect = False
@@ -185,21 +194,19 @@ class Client:
                     await self._ws.pool_event()
             except AuthorizationFailed:
                 await self.close()
-                self.logger.warning(
-                    "Authorization failed, switching to HTTP client")
+                self.logger.warning("Authorization failed, switching to HTTP client")
                 self.websocket_config = None
                 await self.connect()
                 return
             except WebSocketReconnect as e:
                 if e.reopen and self._ws and not self._ws.closed:
                     await self._ws.close()
-                self.logger.exception(
-                    f"Attempting a reconnect in {_reconnect_delay}s: {e.reason}"
-                )
+                self.logger.exception(f"Attempting a reconnect in {_reconnect_delay}s: {e.reason}")
             except Exception as e:
                 self.logger.exception(
                     f"An unhandleable error occurred, reconnecting in {_reconnect_delay}s",
-                    exc_info=e)
+                    exc_info=e
+                )
             # use http client while reconnecting
             if not task or task.done():
                 task = self._loop.create_task(self._get_eew_loop())
@@ -301,27 +308,22 @@ class Client:
                 return
             self.logger.debug(f"Registering {module_path}...")
             notification_client = register_func(_settings, self.logger)
-            if not issubclass(type(notification_client),
-                              BaseNotificationClient):
+            if not issubclass(type(notification_client), BaseNotificationClient):
                 self.logger.debug(
                     f"Ignoring registering {module_name}: Unsupported return type '{type(notification_client).__name__}'"
                 )
                 return
             self.notification_client.append(notification_client)
-            self.logger.info(
-                f"Registered notification client '{module_name}' successfully")
+            self.logger.info(f"Registered notification client '{module_name}' successfully")
         except ModuleNotFoundError as e:
             if e.name == module_path:
-                self.logger.error(
-                    f"Failed to import '{module_name}': '{module_path}' not found"
-                )
+                self.logger.error(f"Failed to import '{module_name}': '{module_path}' not found")
             else:
                 self.logger.error(
                     f"Failed to registered '{module_name}' (most likely lacking of dependencies)"
                 )
         except Exception as e:
-            self.logger.exception(f"Failed to import {module_path}",
-                                  exc_info=e)
+            self.logger.exception(f"Failed to import {module_path}", exc_info=e)
 
     def load_notification_clients(self, path: str):
         """Load all notification clients in the specified directory"""
@@ -336,7 +338,6 @@ class Client:
                 module_path = re.sub(path_split, ".", _path.path)
                 is_module = True
             else:
-                self.logger.debug(
-                    f"Ignoring importing unknown file type: {_path.name}")
+                self.logger.debug(f"Ignoring importing unknown file type: {_path.name}")
                 continue
             self.load_notification_client(module_path, is_module=is_module)

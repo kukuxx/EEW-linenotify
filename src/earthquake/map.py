@@ -121,34 +121,34 @@ class Map:
             # 繪製區域及其強度
             for code, region_gdf in TOWN_RANGE.items():
                 if code in self._eq._expected_intensity:
-                    intensity = self._eq._expected_intensity[
-                        code].intensity.value
+                    intensity = self._eq._expected_intensity[code].intensity.value
                     if intensity > 0:
                         # 繪製區域，並根據強度設定顏色
                         folium.GeoJson(
                             region_gdf,
-                            style_function=lambda feature, intensity=intensity:
-                            {
+                            style_function=lambda feature, intensity=intensity: {
                                 "fillColor": INTENSITY_COLOR[intensity],
                                 "color": "black",
                                 "weight": 0.25,
                                 "fillOpacity": 1
-                            }).add_to(m)
+                            }
+                        ).add_to(m)
 
             # 繪製國家邊界
-            folium.GeoJson(COUNTRY_DATA.set_crs(CRS),
-                           style_function=lambda x: {
-                               "color": "black",
-                               "weight": 0.65,
-                               "fillOpacity": 0
-                           }).add_to(m)
+            folium.GeoJson(
+                COUNTRY_DATA.set_crs(CRS),
+                style_function=lambda x: {
+                    "color": "black",
+                    "weight": 0.65,
+                    "fillOpacity": 0
+                }
+            ).add_to(m)
 
             # 在震央位置新增標記 使用 HTML 和 CSS 建立帶有「X」符號的標記
             folium.Marker(
                 location=[self._eq.lat, self._eq.lon],
                 popup="震央",
-                icon=folium.DivIcon(
-                    html='<div class="marker-icon";>&#10006;&#xfe0e;</div>')
+                icon=folium.DivIcon(html='<div class="marker-icon";>&#10006;&#xfe0e;</div>')
             ).add_to(m)
 
             _map = io.StringIO()

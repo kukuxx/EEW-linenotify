@@ -1,8 +1,8 @@
 import asyncio
 from datetime import datetime
-from typing import Optional
 
 import aiohttp
+from cachetools import TTLCache
 
 from src import EEW, BaseNotificationClient, Settings, Config, Logger
 
@@ -15,8 +15,7 @@ class LineNotifyClient(BaseNotificationClient):
     Represents a [custom] EEW notification client.
     """
 
-    def __init__(self, logger: Logger, config: Config,
-                 notify_token: str) -> None:
+    def __init__(self, logger: Logger, config: Config, notify_token: str) -> None:
         """
         Initialize a new [custom] notification client.
 
@@ -31,89 +30,77 @@ class LineNotifyClient(BaseNotificationClient):
         self.config = config
         self._notify_token = notify_token
         self._custom_set = Settings.get("customization")
-        self._eew_task: asyncio.Future = None
-        self._region_intensity: Optional[dict[tuple[str, str],
-                                              tuple[str, int]]] = {}
+        self._intensity_alerts = TTLCache(maxsize=20, ttl=180)
 
     def get_eew_message(self, eew: EEW):
         #取得EEW訊息並排版
         eq = eew.earthquake
         time_str = eq.time.strftime("%m月%d日 %H:%M:%S")
-        content = (f"\n{time_str},\n發生規模 {eq.mag} 地震,\n編號{eew.id},"
-                   f"\n震央位在{eq.location.display_name or eq.location},"
-                   f"\n震源深度{eq.depth} 公里,\n最大震度{eq.max_intensity.display}")
+        content = (
+            f"\n{time_str},\n發生規模 {eq.mag} 地震,\n編號{eew.id},"
+            f"\n震央位在{eq.location.display_name or eq.location},"
+            f"\n震源深度{eq.depth} 公里,\n最大震度{eq.max_intensity.display}"
+        )
         provider = f"\n(發報單位: {eew.provider.display_name})"
         _message = f"{content} {provider}"
         return _message
 
-    def get_region_intensity(self, eew: EEW):
+    async def get_region_intensity(self, eew: EEW):
         #取得各地震度和抵達時間
         customize = self._custom_set.get("enable")
         eq = eew.earthquake
+        intensity_dict: dict[tuple[str, str], tuple[str,
+                                                    int]] = self._intensity_alerts.get(eew.id) or {}
         if not customize:
-            for city, intensity in eq.city_max_intensity.items():
-                if intensity.intensity.value > 0:
-                    key = (city, intensity.region.name)
-                    if eew.serial <= 1:
-                        self._region_intensity[key] = (
-                            intensity.intensity.display,
-                            int(intensity.distance.s_arrival_time.timestamp()))
-                    else:
-                        # 更新震度不更新抵達時間
-                        self._region_intensity[key] = (
-                            intensity.intensity.display,
-                            self._region_intensity[key][1])
-        else:
-            for city, intensity_list in eq.city_max_intensity.items():
-                for intensity in intensity_list:
-                    if intensity.intensity.value >= 0:
+            if intensity_dict == {}:
+                for city, intensity in eq.city_max_intensity.items():
+                    if intensity.intensity.value > 0:
                         key = (city, intensity.region.name)
-                        if eew.serial <= 1:
-                            self._region_intensity[key] = (
-                                intensity.intensity.display,
-                                int(intensity.distance.s_arrival_time.
-                                    timestamp()))
-                        else:
-                            self._region_intensity[key] = (
-                                intensity.intensity.display,
-                                self._region_intensity[key][1])
+                        intensity_dict[key] = (
+                            intensity.intensity.display,
+                            int(intensity.distance.s_arrival_time.timestamp())
+                        )
 
-        return self._region_intensity
+            else:
+                for city, intensity in eq.city_max_intensity.items():
+                    if intensity.intensity.value > 0:
+                        key = (city, intensity.region.name)
+                        # 更新震度不更新抵達時間
+                        intensity_dict[key] = (intensity.intensity.display, intensity_dict[key][1])
 
-    async def check_intensity(self, eew: EEW):
-        customize = self._custom_set.get("enable")
-        threshold = self._custom_set.get("threshold")
-        if not customize:
-            return True
-        elif eew.serial > 1:
-            result = await self._eew_task
-            if result:
-                return True
-        if not isinstance(threshold, str):
-            raise ValueError("Threshold is not a string.")
-        for key, value in self._region_intensity.items():
-            intensity_value, _ = value
-            if intensity_value >= threshold:
-                return True
-        return False
+        else:
+            if intensity_dict == {}:
+                for city, intensity_list in eq.city_max_intensity.items():
+                    for intensity in intensity_list:
+                        if intensity.intensity.value >= 0:
+                            key = (city, intensity.region.name)
+                            intensity_dict[key] = (
+                                intensity.intensity.display,
+                                int(intensity.distance.s_arrival_time.timestamp())
+                            )
+
+            else:
+                for city, intensity_list in eq.city_max_intensity.items():
+                    for intensity in intensity_list:
+                        if intensity.intensity.value >= 0:
+                            key = (city, intensity.region.name)
+                            intensity_dict[key] = (
+                                intensity.intensity.display, intensity_dict[key][1]
+                            )
+
+        self._intensity_alerts[eew.id] = intensity_dict
+        return intensity_dict
 
     async def _send_region_intensity(self, eew: EEW):
         #發送各地震度和抵達時間並排版
         eq = eew.earthquake
         await eq._intensity_calculated.wait()
         if eq._intensity_calculated.is_set():
-            self.get_region_intensity(eew)
-        if self._region_intensity is not None and await self.check_intensity(
-                eew):
+            region_intensity = await self.get_region_intensity(eew)
             current_time = int(datetime.now().timestamp())
-            if eew.serial <= 1:
-                region_intensity_message = "\n🚨趴下,掩護,穩住🚨\n⚠️ 僅供參考 ⚠️\n預估震度|抵達時間:"
-            else:
-                region_intensity_message = "\n🚨趴下,掩護,穩住🚨\n⚠️ 僅供參考 ⚠️\n震度更新|抵達時間:"
+            region_intensity_message = f"\n🚨第{eew.serial}報🚨\n⚠️以下僅供參考⚠️\n預估震度|抵達時間:"
 
-            for (city,
-                 region), (intensity,
-                           s_arrival_time) in self._region_intensity.items():
+            for (city, region), (intensity, s_arrival_time) in region_intensity.items():
                 arrival_time = max(s_arrival_time - current_time, 0)
                 region_intensity_message += f"\n{city} {region}:{intensity}\n剩餘{arrival_time}秒抵達"
 
@@ -124,11 +111,9 @@ class LineNotifyClient(BaseNotificationClient):
                 "Authorization": f"Bearer {self._notify_token}"
             }
             async with aiohttp.ClientSession(headers=_headers) as session:
-                await self._post_line_api(
-                    session, intensity_msg=region_intensity_message)
-            if eew.final:
-                asyncio.create_task(self._send_eew_img(eew))
-            return True
+                await self._post_line_api(session, intensity_msg=region_intensity_message)
+
+            asyncio.create_task(self._send_eew_img(eew))
 
     async def _send_eew_img(self, eew: EEW):
         #發送各地震度圖片
@@ -147,16 +132,17 @@ class LineNotifyClient(BaseNotificationClient):
                 await self._post_line_api(session, msg=message)
 
         except asyncio.CancelledError:
-            self.logger.error(f"Failed get image")
+            self.logger.info(f"Map task canceled")
         except Exception as e:
-            self.logger.exception(
-                f"Failed to send image alert to Line-Notify: {e}")
+            self.logger.exception(f"Failed to send image alert to Line-Notify: {e}")
 
-    async def _post_line_api(self,
-                             session: aiohttp.ClientSession,
-                             img=None,
-                             msg: str = None,
-                             intensity_msg: str = None) -> None:
+    async def _post_line_api(
+        self,
+        session: aiohttp.ClientSession,
+        img=None,
+        msg: str = None,
+        intensity_msg: str = None
+    ) -> None:
         try:
             # 確認img是否有和其他msg一組
             if img and not msg and not intensity_msg:
@@ -170,23 +156,21 @@ class LineNotifyClient(BaseNotificationClient):
             if img:
                 form.add_field('imageFile', img)
 
-            async with session.post(url=LINE_NOTIFY_API,
-                                    data=form) as response:
+            async with session.post(url=LINE_NOTIFY_API, data=form) as response:
                 if response.ok:
-                    self.logger.info(
-                        f"Message sent to Line-Notify successfully")
+                    self.logger.info(f"Message sent to Line-Notify successfully")
 
                 else:
-                    raise aiohttp.ClientResponseError(response.request_info,
-                                                      status=response.status,
-                                                      history=response.history,
-                                                      message=await
-                                                      response.text())
+                    raise aiohttp.ClientResponseError(
+                        response.request_info,
+                        status=response.status,
+                        history=response.history,
+                        message=await response.text()
+                    )
         except ValueError as e:
             self.logger.error(f"ValueError: {e}")
         except Exception as e:
-            self.logger.exception(
-                f"Failed to send message alert to Line-Notify: {e}")
+            self.logger.exception(f"Failed to send message alert to Line-Notify: {e}")
 
     async def start(self) -> None:
         """
@@ -206,10 +190,7 @@ class LineNotifyClient(BaseNotificationClient):
         :param eew: The EEW.
         :type eew: EEW
         """
-        if self._eew_task is None or self._eew_task.done():
-            self._eew_task = asyncio.create_task(
-                self._send_region_intensity(eew))
-            await self._eew_task
+        await self._send_region_intensity(eew)
 
     async def update_eew(self, eew: EEW):
         """
